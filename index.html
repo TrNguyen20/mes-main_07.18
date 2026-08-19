@@ -133,9 +133,12 @@
 
 <script>
 /* --- DỮ LIỆU --- */
-const urlPlan = 'https://docs.google.com/spreadsheets/d/1quE1eL4Sa6Nl6VRaBWSEbnIJ3RwTYHOt/gviz/tq?tqx=out:csv&gid=2118073741';
-const urlActual = 'https://docs.google.com/spreadsheets/d/1-W2hyNIveWmDyphGcv-182js9oGPHNrk/gviz/tq?tqx=out:csv&gid=1473866023';
-const urlMaster = 'https://docs.google.com/spreadsheets/d/1quE1eL4Sa6Nl6VRaBWSEbnIJ3RwTYHOt/gviz/tq?tqx=out:csv&gid=799317234';
+const urlPlan   = 'data/plan.csv';
+const urlActual = 'data/actual.csv';
+const urlMaster = 'data/master.csv';
+// const urlPlan = 'https://docs.google.com/spreadsheets/d/1quE1eL4Sa6Nl6VRaBWSEbnIJ3RwTYHOt/gviz/tq?tqx=out:csv&gid=2118073741';
+// const urlActual = 'https://docs.google.com/spreadsheets/d/1-W2hyNIveWmDyphGcv-182js9oGPHNrk/gviz/tq?tqx=out:csv&gid=1473866023';
+// const urlMaster = 'https://docs.google.com/spreadsheets/d/1quE1eL4Sa6Nl6VRaBWSEbnIJ3RwTYHOt/gviz/tq?tqx=out:csv&gid=799317234';
 
 let calendarObj, calendarJobObj;
 let globalPlan = [], globalActual = [];
@@ -169,7 +172,7 @@ function smartParseDate(dStr) {
 /* --- HÀM TẢI CSV AN TOÀN --- */
 async function fetchCSV(url) {
     try {
-        const response = await fetch(url + '&t=' + new Date().getTime());
+        const response = await fetch(url + (url.includes('?') ? '&' : '?') + 't=' + new Date().getTime());
         const text = await response.text();
         const rows = text.split(/\r?\n/).filter(l => l.trim() !== "").map(row => {
             // REGEX NÀY GIÚP TÁCH CỘT NHƯNG BỎ QUA DẤU PHẨY NẰM TRONG NGOẶC KÉP (qui_trinh_gc)
