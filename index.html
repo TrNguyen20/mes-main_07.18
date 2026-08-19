@@ -39,7 +39,10 @@
         .kpi-row { display: flex; gap: 8px; margin-bottom: 8px; flex-shrink: 0; }
         .kpi-box { background: white; padding: 5px; flex: 1; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); text-align: center; }
         .kpi-value { font-size: 18px; font-weight: bold; color: #16a34a; }
-        #calendar { background: white; border-radius: 6px; flex: 1; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        /* [THAY ĐỔI] Gốc chỉ có #calendar. Thêm #calendarJob + min-height:0 để timeline trang 3 hiển thị đúng chiều cao. */
+        #calendar, #calendarJob { background: white; border-radius: 6px; flex: 1; min-height: 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        /* [THAY ĐỔI] Dòng trạng thái trên header: hiển thị số dòng CSV đã tải hoặc thông báo lỗi. */
+        #loadStatus { font-size: 11px; font-weight: bold; margin-left: 10px; }
         
         .past-day { background-color: #fcf9e8 !important; } 
         .today-day { background-color: #f6ffed !important; border-left: 1px solid #52c41a !important; }
@@ -98,6 +101,8 @@
         <button class="btn-nav btn-active" id="btnTimeline" onclick="switchPage('timeline')">📅 TIMELINE</button>
         <button class="btn-nav" id="btnStatus" onclick="switchPage('status')">📋 SHINKO RISUTO (進行リスト)</button>
         <button class="btn-nav" onclick="initApp()">🔄 REFRESH</button>
+        <!-- [THAY ĐỔI] Hiển thị trạng thái nạp dữ liệu: "Plan 6 | Actual 2 | Master 3" hoặc thông báo lỗi -->
+        <span id="loadStatus"></span>
     </div>
     <div id="currentTime"></div>
 </div>
@@ -132,10 +137,34 @@
 </div>
 
 <script>
+/* =============================================================================
+   TÓM TẮT THAY ĐỔI SO VỚI PHIÊN BẢN GỐC (Google Sheets online)
+   ---------------------------------------------------------------------------
+   1. NGUỒN DỮ LIỆU: Đọc 3 file CSV trong thư mục data/ thay vì Google Sheets.
+      - data/plan.csv   → Kế hoạch sản xuất (timeline máy)
+      - data/actual.csv → Thực tế gia công
+      - data/master.csv → Bảng Shinko Risuto (tiến độ đơn hàng)
+
+   2. CÁCH CHẠY: Phải mở qua web server local, KHÔNG double-click file.
+      Lệnh: cd thư_mục_dự_án  →  python -m http.server 8080
+      Trình duyệt: http://localhost:8080/index.html
+
+   3. CẬP NHẬT DỮ LIỆU: Export CSV từ Excel/Sheets, ghi đè 3 file trong data/,
+      rồi bấm REFRESH (hoặc đợi 60 giây tự làm mới). Giữ nguyên tên cột dòng 1.
+
+   4. ĐỌC NGÀY THÁNG: CSV xuất Excel dùng M/D/YYYY (vd: 6/23/2026).
+      Phiên bản gốc chỉ xử lý tốt YYYY/MM/DD từ Google Sheets.
+
+   5. QUAY LẠI GOOGLE SHEETS: Comment 3 dòng urlPlan/urlActual/urlMaster bên dưới,
+      bỏ comment 3 dòng URL Google (cần share sheet "Anyone with link → Viewer").
+   ============================================================================= */
+
 /* --- DỮ LIỆU --- */
+/* [THAY ĐỔI] Nguồn local CSV — thay cho URL Google Sheets ở phiên bản gốc */
 const urlPlan   = 'data/plan.csv';
 const urlActual = 'data/actual.csv';
 const urlMaster = 'data/master.csv';
+/* [GỐC] URL Google Sheets — bỏ comment 3 dòng dưới và comment 3 dòng local ở trên để quay lại */
 // const urlPlan = 'https://docs.google.com/spreadsheets/d/1quE1eL4Sa6Nl6VRaBWSEbnIJ3RwTYHOt/gviz/tq?tqx=out:csv&gid=2118073741';
 // const urlActual = 'https://docs.google.com/spreadsheets/d/1-W2hyNIveWmDyphGcv-182js9oGPHNrk/gviz/tq?tqx=out:csv&gid=1473866023';
 // const urlMaster = 'https://docs.google.com/spreadsheets/d/1quE1eL4Sa6Nl6VRaBWSEbnIJ3RwTYHOt/gviz/tq?tqx=out:csv&gid=799317234';
@@ -150,41 +179,90 @@ function stringToColor(str) {
     return `hsl(${Math.abs(hash * 137) % 360}, 80%, 40%)`;
 }
 
-/* --- HÀM GIẢI MÃ NGÀY THÁNG THÔNG MINH (Xử lý lỗi năm 26 và định dạng VN/JP) --- */
-function smartParseDate(dStr) {
-    if (!dStr || dStr.trim() === "" || dStr === "null") return null;
+/* --- HÀM GIẢI MÃ NGÀY THÁNG --- */
+/* [THAY ĐỔI] Viết lại toàn bộ so với gốc. Lý do: CSV local (Excel) dùng M/D/YYYY
+   (vd: 6/23/2026 = tháng 6 ngày 23). Hàm gốc hiểu nhầm thành ngày 6 tháng 23 → lịch trống. */
+function parseYMD(dStr) {
+    if (!dStr || String(dStr).trim() === "" || String(dStr).trim() === "null") return null;
     try {
-        let datePart = dStr.split(' ')[0]; // Lấy phần ngày, bỏ phần giờ 0:00
-        let parts = datePart.includes('/') ? datePart.split('/') : datePart.split('-');
-        
-        if (parts.length === 3) {
-            let y = parts[0].length === 4 ? parts[0] : parts[2]; // Tìm năm
-            let m = parts[0].length === 4 ? parts[1] : parts[1]; // Tìm tháng
-            let d = parts[0].length === 4 ? parts[2] : parts[0]; // Tìm ngày
-            
-            if (y.length === 2) y = "20" + y; // Sửa lỗi 26 -> 2026
-            return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+        const datePart = String(dStr).trim().split(/\s+/)[0].replace(/\./g, "/");
+        const parts = datePart.includes("/") ? datePart.split("/") : datePart.split("-");
+        if (parts.length !== 3) return null;
+
+        let y, m, d;
+        if (parts[0].length === 4) {
+            y = parts[0]; m = parts[1]; d = parts[2];
+        } else {
+            y = parts[2].length === 2 ? "20" + parts[2] : parts[2];
+            const first = Number(parts[0]);
+            const second = Number(parts[1]);
+            if (first > 12 && second <= 12) { d = parts[0]; m = parts[1]; }
+            else { m = parts[0]; d = parts[1]; }
         }
-        return datePart;
+        if (y.length === 2) y = "20" + y;
+
+        const yi = Number(y), mi = Number(m), di = Number(d);
+        if (!yi || mi < 1 || mi > 12 || di < 1 || di > 31) return null;
+        return `${String(yi).padStart(4, "0")}-${String(mi).padStart(2, "0")}-${String(di).padStart(2, "0")}`;
     } catch (e) { return null; }
 }
 
-/* --- HÀM TẢI CSV AN TOÀN --- */
+function smartParseDate(dStr) {
+    return parseYMD(dStr);
+}
+
+/* [THAY ĐỔI] Thêm mới — dùng cho cột có giờ: thoi_diem_bat_dau, thoi_diem_hoan_thanh (actual.csv) */
+function smartParseDateTime(dStr) {
+    const ymd = parseYMD(dStr);
+    if (!ymd) return null;
+    const bits = String(dStr).trim().split(/\s+/);
+    if (bits.length < 2) return ymd;
+    const tp = bits[1].split(":");
+    if (tp.length < 2) return ymd;
+    const hh = String(tp[0]).padStart(2, "0");
+    const mm = String(tp[1] || "0").padStart(2, "0");
+    const ss = String(tp[2] || "0").padStart(2, "0");
+    return `${ymd}T${hh}:${mm}:${ss}`;
+}
+
+/* [THAY ĐỔI] Thêm mới — cộng ngày không dùng toISOString() (gốc dùng toISOString, dễ lệch múi giờ/lỗi ngày) */
+function addDaysYMD(ymd, n) {
+    const [y, m, d] = ymd.split("-").map(Number);
+    const dt = new Date(y, m - 1, d + n);
+    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+
+/* [THAY ĐỔI] Thêm mới — cập nhật dòng trạng thái trên header cho ban vận hành / lãnh đạo theo dõi */
+function setLoadStatus(msg, ok) {
+    const el = document.getElementById("loadStatus");
+    if (!el) return;
+    el.innerText = msg;
+    el.style.color = ok ? "#dcfce7" : "#fecaca";
+}
+
+/* --- HÀM TẢI CSV --- */
+/* [THAY ĐỔI] So với gốc:
+   - cache: "no-store" → luôn lấy file CSV mới nhất khi REFRESH / 60s
+   - Xóa BOM (ký tự ẩn đầu file Excel) → tránh lỗi tên cột
+   - Báo lỗi rõ ràng thay vì trả mảng rỗng im lặng
+   - Hỗ trợ URL local (data/plan.csv) lẫn URL Google (?t=...) */
 async function fetchCSV(url) {
-    try {
-        const response = await fetch(url + (url.includes('?') ? '&' : '?') + 't=' + new Date().getTime());
-        const text = await response.text();
-        const rows = text.split(/\r?\n/).filter(l => l.trim() !== "").map(row => {
-            // REGEX NÀY GIÚP TÁCH CỘT NHƯNG BỎ QUA DẤU PHẨY NẰM TRONG NGOẶC KÉP (qui_trinh_gc)
-            return row.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(cell => cell.replace(/^"(.*)"$/, '$1').trim());
-        });
-        const headers = rows[0];
-        return rows.slice(1).map(row => {
-            let obj = {};
-            headers.forEach((h, i) => { if(h) obj[h] = row[i]; });
-            return obj;
-        });
-    } catch (e) { console.error("Lỗi tải file:", e); return []; }
+    const sep = url.includes("?") ? "&" : "?";
+    const response = await fetch(url + sep + "t=" + Date.now(), { cache: "no-store" });
+    if (!response.ok) throw new Error("Không tải được " + url + " (HTTP " + response.status + ")");
+    let text = await response.text();
+    text = text.replace(/^\uFEFF/, "");
+    const rows = text.split(/\r?\n/).filter(l => l.trim() !== "").map(row => {
+        return row.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(cell => cell.replace(/^"(.*)"$/, "$1").trim());
+    });
+    if (!rows.length) return [];
+    const headers = rows[0].map(h => (h || "").replace(/^\uFEFF/, "").trim());
+    if (!headers[0] || headers[0].startsWith("<")) throw new Error("File CSV không hợp lệ: " + url);
+    return rows.slice(1).map(row => {
+        let obj = {};
+        headers.forEach((h, i) => { if (h) obj[h] = row[i]; });
+        return obj;
+    });
 }
 
 
@@ -225,16 +303,17 @@ function openJobTimeline(jobId) {
     filteredPlan.forEach(item => {
         const s = smartParseDate(item["Ngay_Bat_Dau"]), e = smartParseDate(item["Ngay_Ket_Thuc"]);
         if (!s) return;
-        let endD = new Date(e || s); endD.setDate(endD.getDate() + 1);
+        /* [THAY ĐỔI] end: addDaysYMD(...) thay cho endD.toISOString() — xem hàm addDaysYMD ở trên */
         events.push({
             resourceId: jobId, title: item["Ten_May"] + " (" + (item["Ten_Cong_Doan"] || "") + ")",
-            start: s, end: endD.toISOString().split('T')[0],
+            start: s, end: addDaysYMD(e || s, 1),
             backgroundColor: stringToColor(item["Ten_May"]), borderColor: stringToColor(item["Ten_May"]), sortOrder: 1,extendedProps:{ type:"PLAN", data:item }
         });
     });
     // Actual: Hiện tên Máy
     filteredActual.forEach(item => {
-        const s = smartParseDate(item["thoi_diem_bat_dau"]), e = smartParseDate(item["thoi_diem_hoan_thanh"]);
+        /* [THAY ĐỔI] smartParseDateTime thay smartParseDate — actual có cả giờ phút */
+        const s = smartParseDateTime(item["thoi_diem_bat_dau"]), e = smartParseDateTime(item["thoi_diem_hoan_thanh"]);
         if (!s) return;
         let endTime = e; if (!endTime || item["trang_thai"] === "Processing") endTime = new Date().toISOString();
         events.push({
@@ -302,19 +381,19 @@ async function initApp() {
         let machineSet = new Set(), events = [];
         let run=0, wait=0, delay=0, qty=0;
 
-        // Xử lý Timeline Máy (Giữ nguyên code của bạn)
         dataPlan.forEach(item => {
             const m = item["Ten_May"], j = item["Ma_Hang"], s = smartParseDate(item["Ngay_Bat_Dau"]), e = smartParseDate(item["Ngay_Ket_Thuc"]);
             if (!m || !j || !s) return; machineSet.add(m);
             const status = (item["Status"] || "").toUpperCase();
             if(status === 'RUN') run++; else if(status === 'WAIT') wait++; else if(status === 'DELAY') delay++;
             qty += Number(item["Qty"] || 0);
-            let endD = new Date(e || s); endD.setDate(endD.getDate() + 1);
-            events.push({ resourceId: m, title: j + " (" + (item["Ten_Cong_Doan"] || "") + ")", start: s, end: endD.toISOString().split('T')[0], backgroundColor: stringToColor(j), borderColor: stringToColor(j), extendedProps:{data:item,type:"PLAN"}, sortOrder: 1 });
+            /* [THAY ĐỔI] end: addDaysYMD(...) thay cho toISOString() — tránh lỗi ngày từ CSV Excel */
+            events.push({ resourceId: m, title: j + " (" + (item["Ten_Cong_Doan"] || "") + ")", start: s, end: addDaysYMD(e || s, 1), backgroundColor: stringToColor(j), borderColor: stringToColor(j), extendedProps:{data:item,type:"PLAN"}, sortOrder: 1 });
         });
 
         dataActual.forEach(item => {
-            const m = item["may_gia_cong"], j = item["ma_ban_ve"], step = item["thu_tu_gc"], s = smartParseDate(item["thoi_diem_bat_dau"]), e = smartParseDate(item["thoi_diem_hoan_thanh"]);
+            /* [THAY ĐỔI] smartParseDateTime cho cột thoi_diem_* trong actual.csv */
+            const m = item["may_gia_cong"], j = item["ma_ban_ve"], s = smartParseDateTime(item["thoi_diem_bat_dau"]), e = smartParseDateTime(item["thoi_diem_hoan_thanh"]);
             if (!m || !j || !s) return; machineSet.add(m);
             let endTime = e; if (!endTime || item["trang_thai"] === "Processing") endTime = new Date().toISOString();
             events.push({ resourceId: m, title: "ACTUAL: " + j, start: s, end: endTime, className: 'actual-event', extendedProps:{data:item,type:"ACTUAL"}, sortOrder: 2 });
@@ -383,8 +462,10 @@ async function initApp() {
                 } else {
                     if (c.startsWith("ngaycd_") && !c.endsWith("end") && val !== "") {
                         let endVal = row[c + "end"];
+                        /* [THAY ĐỔI] Parse ngày trước khi so sánh — gốc dùng new Date(smartParseDate) dễ lỗi với M/D/YYYY */
+                        const parsedStart = smartParseDate(val);
                         if (endVal && endVal !== "" && endVal !== "null") { cellClass = "cell-completed"; } 
-                        else if (new Date(smartParseDate(val)) <= today) { cellClass = "cell-warning"; }
+                        else if (parsedStart && new Date(parsedStart + "T00:00:00") <= today) { cellClass = "cell-warning"; }
                         val = val.split(' ')[0];
                     }
                     rowHtml += `<td class="${cellClass}">${val}</td>`;
@@ -395,7 +476,16 @@ async function initApp() {
 
         document.getElementById('runCount').innerText = run; document.getElementById('waitCount').innerText = wait;
         document.getElementById('delayCount').innerText = delay; document.getElementById('outputQty').innerText = qty;
-    } catch (e) { console.error("Error:", e); }
+        /* [THAY ĐỔI] Báo số dòng đã nạp — giúp xác nhận nhanh CSV đã được đọc đúng */
+        setLoadStatus("Plan " + dataPlan.length + " | Actual " + dataActual.length + " | Master " + dataMaster.length, true);
+    } catch (e) {
+        console.error("Error:", e);
+        /* [THAY ĐỔI] Gợi ý chạy qua localhost nếu mở file bằng double-click (file:// bị chặn fetch) */
+        const hint = (location.protocol === "file:")
+            ? " Hãy mở qua http://localhost:8080 (python -m http.server 8080), không double-click file."
+            : "";
+        setLoadStatus("Lỗi tải dữ liệu: " + (e.message || e) + hint, false);
+    }
 }
 
 function updateClock() { document.getElementById('currentTime').innerText = new Date().toLocaleString('ja-JP'); }
